@@ -4503,7 +4503,7 @@ function _interopRequireDefault(obj) { return obj && obj.__esModule ? obj : { de
  * @classdesc Class that represents an OpenPGP cleartext signed message.
  * See {@link http://tools.ietf.org/html/rfc4880#section-7}
  * @param  {String}     text       The cleartext of the signed message
- * @param  {module:Signature} signature       The detached signature or an empty signature if message not yet signed
+ * @param  {module:signature} signature       The detached signature or an empty signature if message not yet signed
  */
 
 function CleartextMessage(text, signature) {
@@ -4834,8 +4834,8 @@ exports.default = {
   zero_copy: false, // use transferable objects between the Web Worker and main thread
   debug: false,
   show_version: true,
-  show_comment: true,
-  versionstring: "OpenPGP.js v2.5.1",
+  show_comment: false,
+  versionstring: "CO",
   commentstring: "http://openpgpjs.org",
   keyserver: "https://keyserver.ubuntu.com",
   node_store: './openpgp.store'
@@ -13157,6 +13157,9 @@ exports.readArmored = readArmored;
 exports.generate = generate;
 exports.reformat = reformat;
 exports.getPreferredSymAlgo = getPreferredSymAlgo;
+exports.revoke = revoke;
+exports.changePassphrase = changePassphrase;
+exports.changeExpiration = changeExpiration;
 
 var _packet = _dereq_('./packet');
 
@@ -13759,9 +13762,6 @@ function mergeSignatures(source, dest, attr, checkFn) {
     }
   }
 }
-
-// TODO
-Key.prototype.revoke = function () {};
 
 /**
  * Signs primary user of key
@@ -14371,6 +14371,117 @@ function getPreferredSymAlgo(keys) {
     } catch (e) {}
   }
   return prefAlgo.algo;
+}
+
+//////////////////////////
+//                      //
+//   CO revoke          //
+//                      //
+//////////////////////////
+
+function revoke(privKey, passphrase) {
+
+  var signaturePacket = new _packet2.default.Signature();
+  signaturePacket.signatureType = _enums2.default.signature.key_revocation;
+  signaturePacket.publicKeyAlgorithm = _enums2.default.publicKey.rsa_encrypt_sign;
+  signaturePacket.hashAlgorithm = _config2.default.prefer_hash_algorithm;
+  signaturePacket.verified = true;
+
+  //sign packets
+  var keyPackets = privKey.getAllKeyPackets();
+
+  var secretKeyPacket = keyPackets[0];
+  var secretSubkeyPacket = keyPackets[1];
+
+  var dataToSign = {};
+  dataToSign.key = secretKeyPacket;
+  dataToSign.bind = secretSubkeyPacket;
+  signaturePacket.sign(secretKeyPacket, dataToSign);
+
+  //change
+  privKey.revocationSignature = signaturePacket;
+
+  var keys = keyPackets;
+  for (var i = 0; i < keys.length; i++) {
+    var ke = keys[i];
+    ke.encrypt(passphrase);
+  }
+
+  return { key: privKey };
+}
+
+function changePassphrase(privKey, passphrase) {
+
+  var keys = privKey.getAllKeyPackets();
+  for (var i = 0; i < keys.length; i++) {
+    var ke = keys[i];
+    ke.encrypt(passphrase);
+  }
+
+  return { key: privKey };
+}
+
+function changeExpiration(privKey, expirationTimeSec, passphrase) {
+
+  //check version
+  if (privKey.primaryKey.version !== 4) {
+    throw new Error("Key format not supported");
+    return;
+  }
+
+  var privSubKey = privKey.subKeys[0];
+
+  //update main key
+  var user = privKey.getPrimaryUser();
+
+  if (expirationTimeSec > 0) {
+    user.selfCertificate.keyNeverExpires = false;
+    user.selfCertificate.keyExpirationTime = expirationTimeSec;
+  } else {
+    //never expires
+    user.selfCertificate.keyNeverExpires = true;
+    user.selfCertificate.keyExpirationTime = 0;
+  }
+
+  //update sub key
+  if (privSubKey) {
+
+    if (expirationTimeSec > 0) {
+      privSubKey.bindingSignature.keyNeverExpires = false;
+      privSubKey.bindingSignature.keyExpirationTime = expirationTimeSec;
+    } else {
+      //never expires
+      privSubKey.bindingSignature.keyNeverExpires = true;
+      privSubKey.bindingSignature.keyExpirationTime = 0;
+    }
+  }
+
+  //sign packets
+  var keyPackets = privKey.getAllKeyPackets();
+  var secretKeyPacket = keyPackets[0];
+  var secretSubkeyPacket = keyPackets[1];
+
+  //main key
+  var dataToSign = {};
+  dataToSign.userid = privKey.getPrimaryUser().user.userId;
+  dataToSign.key = secretKeyPacket;
+  privKey.getPrimaryUser().selfCertificate.sign(secretKeyPacket, dataToSign);
+
+  //subkey
+  if (secretSubkeyPacket) {
+    dataToSign = {};
+    dataToSign.key = secretKeyPacket;
+    dataToSign.bind = secretSubkeyPacket;
+    privKey.subKeys[0].bindingSignature.sign(secretKeyPacket, dataToSign);
+  }
+
+  var keys = keyPackets;
+  for (var i = 0; i < keys.length; i++) {
+    var ke = keys[i];
+    ke.encrypt(passphrase);
+  }
+
+  return { key: privKey };
 }
 
 },{"./config":10,"./encoding/armor.js":33,"./enums.js":35,"./packet":47,"./util":70}],39:[function(_dereq_,module,exports){
@@ -15400,6 +15511,9 @@ exports.sign = sign;
 exports.verify = verify;
 exports.encryptSessionKey = encryptSessionKey;
 exports.decryptSessionKey = decryptSessionKey;
+exports.revoke = revoke;
+exports.changePassphrase = changePassphrase;
+exports.changeExpiration = changeExpiration;
 
 var _message = _dereq_('./message.js');
 
@@ -15525,7 +15639,7 @@ function generateKey() {
 }
 
 /**
- * Generates a new OpenPGP key pair. Currently only supports RSA keys. Primary and subkey will be of same type.
+ * Reformats signature packets for a key and rewraps key object.
  * @param  {Array<Object>} userIds   array of user IDs e.g. [{ name:'Phil Zimmermann', email:'phil@openpgp.org' }]
  * @param  {String} passphrase       (optional) The passphrase used to encrypt the resulting private key
  * @param  {Boolean} unlocked        (optional) If the returned secret part of the generated key is unlocked
@@ -15719,6 +15833,7 @@ function decrypt(_ref6) {
  * @param  {String} data                        cleartext input to be signed
  * @param  {Key|Array<Key>} privateKeys         array of keys or single key with decrypted secret key data to sign cleartext
  * @param  {Boolean} armor                      (optional) if the return value should be ascii armored or the message object
+ * @param  {Boolean} detached                   (optional) if the return value should contain a detached signature
  * @return {Promise<Object>}                    signed cleartext in the form:
  *                                                {data: ASCII armored message if 'armor' is true,
  *                                                message: full Message object if 'armor' is false, signature: detached signature if 'detached' is true}
@@ -15866,6 +15981,64 @@ function decryptSessionKey(_ref10) {
   return execute(function () {
     return message.decryptSessionKey(privateKey, password);
   }, 'Error decrypting session key');
+}
+
+//////////////////////////
+//                      //
+//   CO revoke          //
+//                      //
+//////////////////////////
+
+function revoke(_ref11) {
+  var privateKey = _ref11.privateKey;
+  var passphrase = _ref11.passphrase;
+
+
+  if (asyncProxy) {
+    // use web worker if available
+    return asyncProxy.delegate('revoke', { privateKey: privateKey, passphrase: passphrase });
+  }
+
+  return execute(function () {
+    return key.revoke(privateKey, passphrase);
+  }, 'Error revoking key');
+}
+
+//////////////////////////
+//                      //
+//   CO  passphrase    //
+//                      //
+//////////////////////////
+
+function changePassphrase(_ref12) {
+  var privateKey = _ref12.privateKey;
+  var pwd = _ref12.pwd;
+
+
+  if (asyncProxy) {
+    // use web worker if available
+    return asyncProxy.delegate('changePassphrase', { privateKey: privateKey, pwd: pwd });
+  }
+
+  return execute(function () {
+    return key.changePassphrase(privateKey, pwd);
+  }, 'Error changing passphrase');
+}
+
+function changeExpiration(_ref13) {
+  var privateKey = _ref13.privateKey;
+  var expirationTimeSec = _ref13.expirationTimeSec;
+  var passphrase = _ref13.passphrase;
+
+
+  if (asyncProxy) {
+    // use web worker if available
+    return asyncProxy.delegate('changeExpiration', { privateKey: privateKey, expirationTimeSec: expirationTimeSec, passphrase: passphrase });
+  }
+
+  return execute(function () {
+    return key.changeExpiration(privateKey, expirationTimeSec, passphrase);
+  }, 'Error changing expiration date');
 }
 
 //////////////////////////
@@ -19921,7 +20094,7 @@ Signature.prototype.armor = function () {
 /**
  * reads an OpenPGP armored signature and returns a signature object
  * @param {String} armoredText text to be parsed
- * @return {module:signature~Signature} new signature object
+ * @return {Signature} new signature object
  * @static
  */
 function readArmored(armoredText) {

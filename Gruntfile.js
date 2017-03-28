@@ -94,7 +94,7 @@ module.exports = function(grunt) {
         dest: ['dist/openpgp.js'],
         replacements: [{
           from: /OpenPGP.js VERSION/g,
-          to: 'OpenPGP.js v<%= pkg.version %>'
+          to: 'CO'
         }]
       },
       openpgp_debug: {

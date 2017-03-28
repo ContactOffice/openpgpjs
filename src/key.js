@@ -633,10 +633,7 @@ function mergeSignatures(source, dest, attr, checkFn) {
   }
 }
 
-// TODO
-Key.prototype.revoke = function() {
 
-};
 
 /**
  * Signs primary user of key
@@ -1248,3 +1245,132 @@ export function getPreferredSymAlgo(keys) {
   }
   return prefAlgo.algo;
 }
+
+//////////////////////////
+//                      //
+//   CO revoke          //
+//                      //
+//////////////////////////
+
+export function revoke(privKey,passphrase) {
+
+
+  var signaturePacket = new packet.Signature();
+  signaturePacket.signatureType = enums.signature.key_revocation;
+  signaturePacket.publicKeyAlgorithm =enums.publicKey.rsa_encrypt_sign;
+  signaturePacket.hashAlgorithm = config.prefer_hash_algorithm;
+  signaturePacket.verified= true;
+
+  //sign packets 
+  var keyPackets =privKey.getAllKeyPackets();
+  
+  var secretKeyPacket = keyPackets[0];
+  var secretSubkeyPacket =keyPackets[1];
+
+  var dataToSign = {};
+  dataToSign.key = secretKeyPacket;
+  dataToSign.bind = secretSubkeyPacket;
+  signaturePacket.sign(secretKeyPacket, dataToSign);
+
+  //change
+  privKey.revocationSignature = signaturePacket;
+
+  var keys = keyPackets;
+    for (var i = 0; i < keys.length; i++) {
+      var ke = keys[i];
+      ke.encrypt(passphrase);
+  }
+
+
+  return {key:privKey};
+
+}
+
+export function changePassphrase(privKey, passphrase) {
+
+
+   var keys = privKey.getAllKeyPackets();
+    for (var i = 0; i < keys.length; i++) {
+      var ke = keys[i];
+      ke.encrypt(passphrase);
+    }
+
+
+  return {key:privKey};
+}
+
+
+
+export function changeExpiration(privKey,expirationTimeSec, passphrase) {
+
+
+
+//check version
+if(privKey.primaryKey.version !== 4){
+  throw new Error("Key format not supported")
+  return;
+}
+
+var privSubKey = privKey.subKeys[0];
+
+//update main key
+var user = privKey.getPrimaryUser();
+
+if(expirationTimeSec > 0){
+  user.selfCertificate.keyNeverExpires =false;
+    user.selfCertificate.keyExpirationTime = expirationTimeSec;
+}else{
+  //never expires
+  user.selfCertificate.keyNeverExpires =true;
+    user.selfCertificate.keyExpirationTime = 0;
+}
+
+
+//update sub key
+if(privSubKey){
+
+  if(expirationTimeSec > 0){
+    privSubKey.bindingSignature.keyNeverExpires =false;
+    privSubKey.bindingSignature.keyExpirationTime =expirationTimeSec;
+  }else{
+    //never expires
+    privSubKey.bindingSignature.keyNeverExpires =true;
+    privSubKey.bindingSignature.keyExpirationTime =0;
+  }
+  
+}
+
+
+
+//sign packets 
+var keyPackets =privKey.getAllKeyPackets();
+var secretKeyPacket = keyPackets[0];
+var secretSubkeyPacket =keyPackets[1];
+
+//main key
+var dataToSign = {};
+dataToSign.userid =privKey.getPrimaryUser().user.userId;
+dataToSign.key = secretKeyPacket;
+privKey.getPrimaryUser().selfCertificate.sign(secretKeyPacket, dataToSign); 
+
+
+//subkey
+if(secretSubkeyPacket){
+  dataToSign = {};
+  dataToSign.key = secretKeyPacket;
+  dataToSign.bind = secretSubkeyPacket;
+  privKey.subKeys[0].bindingSignature.sign(secretKeyPacket, dataToSign);
+}
+
+
+  var keys = keyPackets;
+    for (var i = 0; i < keys.length; i++) {
+      var ke = keys[i];
+      ke.encrypt(passphrase);
+  }
+
+  
+  return {key:privKey};
+}
+
+

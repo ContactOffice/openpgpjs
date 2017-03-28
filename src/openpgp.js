@@ -397,6 +397,51 @@ export function decryptSessionKey({ message, privateKey, password }) {
   return execute(() => message.decryptSessionKey(privateKey, password), 'Error decrypting session key');
 }
 
+//////////////////////////
+//                      //
+//   CO revoke          //
+//                      //
+//////////////////////////
+
+export function revoke({privateKey, passphrase}) {
+
+
+  if (asyncProxy) { // use web worker if available
+    return asyncProxy.delegate('revoke',{privateKey,passphrase});
+  }
+
+
+  return execute(() => key.revoke(privateKey,passphrase), 'Error revoking key');
+}
+
+//////////////////////////
+//                      //
+//   CO  passphrase    //
+//                      //
+//////////////////////////
+
+export function changePassphrase({privateKey, pwd}) {
+
+  if (asyncProxy) { // use web worker if available
+    return asyncProxy.delegate('changePassphrase',{privateKey, pwd});
+  }
+
+
+  return execute(() => key.changePassphrase(privateKey, pwd), 'Error changing passphrase');
+}
+
+export function changeExpiration({privateKey, expirationTimeSec, passphrase}) {
+
+  if (asyncProxy) { // use web worker if available
+    return asyncProxy.delegate('changeExpiration',{privateKey, expirationTimeSec,passphrase});
+  }
+
+
+  return execute(() => key.changeExpiration(privateKey, expirationTimeSec,passphrase), 'Error changing expiration date');
+}
+
+
+
 
 //////////////////////////
 //                      //

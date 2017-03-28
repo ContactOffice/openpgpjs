@@ -45,7 +45,7 @@ export default {
   zero_copy: false, // use transferable objects between the Web Worker and main thread
   debug: false,
   show_version: true,
-  show_comment: true,
+  show_comment: false,
   versionstring: "OpenPGP.js VERSION",
   commentstring: "http://openpgpjs.org",
   keyserver: "https://keyserver.ubuntu.com",
